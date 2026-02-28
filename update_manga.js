@@ -2,50 +2,76 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 
-// This ensures the file is created in the same folder as the script
 async function updateManga() {
-    const filePath = path.join(__dirname, 'manga_data.json');
+    // Ensure we are looking for the file in the root directory
+    const filePath = path.join(process.cwd(), 'manga_data.json');
     let localData = [];
     
     if (fs.existsSync(filePath)) {
-        localData = JSON.parse(fs.readFileSync(filePath));
+        try {
+            const content = fs.readFileSync(filePath, 'utf8');
+            localData = JSON.parse(content || '[]');
+        } catch (e) {
+            localData = [];
+        }
     }
 
     try {
-        // Fetch 1 Random Manga (Filtered: Safe, English)
+        console.log("Fetching random manga...");
+        // includes[]=cover_art allows us to get the filename without a second API call
         const res = await axios.get('https://api.mangadex.org/manga/random', {
             params: {
                 'contentRating[]': ['safe', 'suggestive'],
-                'includedTagsMode': 'AND',
+                'includes[]': ['cover_art'],
                 'availableTranslatedLanguage[]': ['en']
             }
         });
 
         const manga = res.data.data;
         const mangaId = manga.id;
-        const title = manga.attributes.title.en || Object.values(manga.attributes.title)[0];
+        
+        // Find English title safely
+        const title = manga.attributes.title.en || 
+                      (manga.attributes.altTitles.find(t => t.en) || {}).en || 
+                      Object.values(manga.attributes.title)[0];
 
-        // Avoid Duplicates
-        if (localData.some(m => m.id === mangaId)) {
-            console.log("Duplicate found, skipping...");
+        if (!title) {
+            console.log("No clear title found, skipping...");
             return;
         }
 
-        // Get Cover Image
-        const coverRel = manga.relationships.find(r => r.type === 'cover_art');
-        const coverRes = await axios.get(`https://api.mangadex.org/cover/${coverRel.id}`);
-        const coverFile = coverRes.data.data.attributes.fileName;
-        const coverUrl = `https://uploads.mangadex.org/covers/${mangaId}/${coverFile}.256.jpg`;
+        // Avoid Duplicates
+        if (localData.some(m => m.id === mangaId)) {
+            console.log(`Duplicate found (${title}), skipping...`);
+            return;
+        }
 
-        // Add to list (Keep only last 20 to keep file small)
-        localData.unshift({ id: mangaId, title, cover: coverUrl });
-        const updatedData = localData.slice(0, 20);
+        // Get Cover Image from expanded relationship
+        const coverRel = manga.relationships.find(r => r.type === 'cover_art');
+        if (!coverRel || !coverRel.attributes) {
+            console.log("No cover art attributes found, skipping...");
+            return;
+        }
+        
+        const fileName = coverRel.attributes.fileName;
+        const coverUrl = `https://uploads.mangadex.org/covers/${mangaId}/${fileName}.256.jpg`;
+
+        // Add to the TOP of the list
+        localData.unshift({ 
+            id: mangaId, 
+            title: title, 
+            cover: coverUrl,
+            updatedAt: new Date().toISOString() 
+        });
+
+        // Keep only the most recent 24 (nice for a grid)
+        const updatedData = localData.slice(0, 24);
 
         fs.writeFileSync(filePath, JSON.stringify(updatedData, null, 2));
-        console.log(`Added: ${title}`);
+        console.log(`Successfully added: ${title}`);
 
     } catch (err) {
-        console.error("API Error:", err.message);
+        console.error("Critical API Error:", err.response ? err.response.data : err.message);
     }
 }
 
