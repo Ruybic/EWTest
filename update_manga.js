@@ -3,22 +3,15 @@ const path = require('path');
 const axios = require('axios');
 
 async function updateManga() {
-    // Ensure we are looking for the file in the root directory
     const filePath = path.join(process.cwd(), 'manga_data.json');
     let localData = [];
     
     if (fs.existsSync(filePath)) {
-        try {
-            const content = fs.readFileSync(filePath, 'utf8');
-            localData = JSON.parse(content || '[]');
-        } catch (e) {
-            localData = [];
-        }
+        localData = JSON.parse(fs.readFileSync(filePath, 'utf8') || '[]');
     }
 
     try {
-        console.log("Fetching random manga...");
-        // includes[]=cover_art allows us to get the filename without a second API call
+        console.log("🎲 Rolling for random manga...");
         const res = await axios.get('https://api.mangadex.org/manga/random', {
             params: {
                 'contentRating[]': ['safe', 'suggestive'],
@@ -29,49 +22,34 @@ async function updateManga() {
 
         const manga = res.data.data;
         const mangaId = manga.id;
-        
-        // Find English title safely
-        const title = manga.attributes.title.en || 
-                      (manga.attributes.altTitles.find(t => t.en) || {}).en || 
-                      Object.values(manga.attributes.title)[0];
+        const title = manga.attributes.title.en || Object.values(manga.attributes.title)[0];
 
-        if (!title) {
-            console.log("No clear title found, skipping...");
-            return;
-        }
+        // CHECK 1: Title exists?
+        if (!title) throw new Error("No title found.");
 
-        // Avoid Duplicates
+        // CHECK 2: Is it a duplicate?
         if (localData.some(m => m.id === mangaId)) {
-            console.log(`Duplicate found (${title}), skipping...`);
-            return;
+            throw new Error(`Duplicate found: ${title}`);
         }
 
-        // Get Cover Image from expanded relationship
+        // CHECK 3: Has cover art?
         const coverRel = manga.relationships.find(r => r.type === 'cover_art');
         if (!coverRel || !coverRel.attributes) {
-            console.log("No cover art attributes found, skipping...");
-            return;
+            throw new Error("Missing cover art.");
         }
         
         const fileName = coverRel.attributes.fileName;
         const coverUrl = `https://uploads.mangadex.org/covers/${mangaId}/${fileName}.256.jpg`;
 
-        // Add to the TOP of the list
-        localData.unshift({ 
-            id: mangaId, 
-            title: title, 
-            cover: coverUrl,
-            updatedAt: new Date().toISOString() 
-        });
-
-        // Keep only the most recent 24 (nice for a grid)
-        const updatedData = localData.slice(0, 24);
-
-        fs.writeFileSync(filePath, JSON.stringify(updatedData, null, 2));
-        console.log(`Successfully added: ${title}`);
+        localData.unshift({ id: mangaId, title, cover: coverUrl, date: new Date().toISOString() });
+        fs.writeFileSync(filePath, JSON.stringify(localData.slice(0, 24), null, 2));
+        
+        console.log(`✅ Success! Added: ${title}`);
+        process.exit(0); // Tell GitHub it worked
 
     } catch (err) {
-        console.error("Critical API Error:", err.response ? err.response.data : err.message);
+        console.log(`❌ Attempt failed: ${err.message}`);
+        process.exit(1); // Tell GitHub to retry
     }
 }
 
