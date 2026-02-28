@@ -1,8 +1,10 @@
 const fs = require('fs');
+const path = require('path');
 const axios = require('axios');
 
+// This ensures the file is created in the same folder as the script
 async function updateManga() {
-    const filePath = './manga_data.json';
+    const filePath = path.join(__dirname, 'manga_data.json');
     let localData = [];
     
     if (fs.existsSync(filePath)) {
