@@ -1,26 +1,46 @@
 name: Update Manga Data
 on:
   schedule:
-    - cron: '0 */6 * * *' # Every 6 hours
-  workflow_dispatch: # Allows manual trigger
+    - cron: '0 */6 * * *' # Runs every 6 hours
+  workflow_dispatch: # Allows you to click "Run Workflow" manually for testing
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Crucial for pushing changes back to the repo
     steps:
-      - uses: actions/checkout@v3
-      - name: Setup Node
-        uses: actions/setup-node@v3
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 18
-      - run: npm install axios
+
+      - name: Install Dependencies
+        run: npm install axios
+
       - name: Run Update Script
         run: node update_manga.js
-      - name: Commit and Push
+
+      - name: Commit and Push Changes
         run: |
           git config --global user.name "MangaBot"
-          git config --global user.email "bot@github.com"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Force create file if the script failed, so 'git add' doesn't crash
+          if [ ! -f manga_data.json ]; then
+            echo "[]" > manga_data.json
+          fi
+          
           git add manga_data.json
-          git commit -m "Auto-update manga list" || exit 0
-          git push
+          
+          # Only commit if there are actual changes (diff)
+          if git diff --staged --quiet; then
+            echo "No new manga found this time. Skipping commit."
+          else
+            git commit -m "Auto-update manga: $(date +'%Y-%m-%d %H:%M')"
+            git push
+          fi
           
